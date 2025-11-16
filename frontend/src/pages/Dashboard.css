@@ -1,0 +1,29 @@
+.dashboard {
+  width: 100%;
+}
+
+.loading,
+.error {
+  padding: 1rem;
+  text-align: center;
+  margin: 1rem 0;
+  border-radius: 4px;
+}
+
+.loading {
+  background-color: #e3f2fd;
+  color: #1976d2;
+}
+
+.error {
+  background-color: #ffebee;
+  color: #c62828;
+}
+
+.results-info {
+  margin: 1rem 0;
+  padding: 0.5rem;
+  color: #666;
+  font-size: 0.9rem;
+}
+
