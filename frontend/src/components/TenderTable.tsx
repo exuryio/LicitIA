@@ -26,9 +26,17 @@ const TenderTable: React.FC<TenderTableProps> = ({ tenders }) => {
     }).format(amount)
   }
   
-  const formatRelevanceScore = (score: number | null): string => {
-    if (score === null) return 'N/A'
-    return (score * 100).toFixed(0) + '%'
+  const getEstadoBadgeClass = (estado: string): string => {
+    const estadoLower = estado.toLowerCase()
+    if (estadoLower === 'publicado' || estadoLower === 'abierto' || estadoLower === 'aprobado') {
+      return 'estado-abierto'
+    } else if (estadoLower === 'cerrado' || estadoLower === 'cancelado' || estadoLower === 'seleccionado') {
+      return 'estado-cerrado'
+    } else if (estadoLower === 'borrador' || estadoLower === 'en aprobación') {
+      return 'estado-pendiente'
+    } else {
+      return 'estado-unknown'
+    }
   }
   
   if (tenders.length === 0) {
@@ -47,9 +55,9 @@ const TenderTable: React.FC<TenderTableProps> = ({ tenders }) => {
             <th>Fecha Publicación</th>
             <th>Entidad</th>
             <th>Departamento</th>
-            <th>Tipo de Contrato</th>
             <th>Monto</th>
-            <th>Relevancia</th>
+            <th>Estado</th>
+            <th>Match Experiencia</th>
             <th>Enlace</th>
           </tr>
         </thead>
@@ -65,12 +73,24 @@ const TenderTable: React.FC<TenderTableProps> = ({ tenders }) => {
                 </div>
               </td>
               <td>{tender.department || 'N/A'}</td>
-              <td>{tender.contract_type || 'N/A'}</td>
               <td className="amount-cell">{formatCurrency(tender.amount)}</td>
               <td>
-                <span className={`relevance-badge ${tender.is_relevant_interventoria_vial ? 'relevant' : 'not-relevant'}`}>
-                  {formatRelevanceScore(tender.relevance_score)}
-                </span>
+                {tender.state ? (
+                  <span className={`estado-badge ${getEstadoBadgeClass(tender.state)}`}>
+                    {tender.state}
+                  </span>
+                ) : (
+                  <span className="estado-badge estado-unknown">N/A</span>
+                )}
+              </td>
+              <td>
+                {tender.experience_match_score !== null && tender.experience_match_score !== undefined ? (
+                  <span className={`match-badge ${tender.experience_match_score >= 0.6 ? 'high-match' : tender.experience_match_score >= 0.4 ? 'medium-match' : 'low-match'}`}>
+                    {(tender.experience_match_score * 100).toFixed(0) + '%'}
+                  </span>
+                ) : (
+                  <span className="match-badge no-match">-</span>
+                )}
               </td>
               <td>
                 <a

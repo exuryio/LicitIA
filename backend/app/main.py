@@ -3,7 +3,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.scheduler import start_scheduler, shutdown_scheduler
 from app.core.logging import setup_logging
-from app.api.v1 import health, tenders, subscriptions
+from app.api.v1 import health, tenders, subscriptions, experiences
 from app.services.tender_ingestion import fetch_and_store_new_tenders
 from app.config import settings
 
@@ -30,6 +30,7 @@ app.add_middleware(
 app.include_router(health.router, prefix="/api/v1", tags=["health"])
 app.include_router(tenders.router, prefix="/api/v1", tags=["tenders"])
 app.include_router(subscriptions.router, prefix="/api/v1", tags=["subscriptions"])
+app.include_router(experiences.router, prefix="/api/v1", tags=["experiences"])
 
 
 @app.on_event("startup")
