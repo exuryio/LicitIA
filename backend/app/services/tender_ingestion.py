@@ -5,7 +5,7 @@ from app.core.logging import get_logger
 from app.models.tender import Tender, TenderSource
 from app.models.subscription import Subscription
 from app.services.secop_client import fetch_recent_tenders
-from app.services.classification import classify_tender_relevance
+# Classification removed - experience matching is the main approach
 from app.services.notifications import send_email_alert, send_whatsapp_alert
 
 logger = get_logger(__name__)
@@ -21,137 +21,143 @@ def fetch_and_store_new_tenders() -> None:
     try:
         logger.info("Starting tender fetch job")
         
-        # Determine since_timestamp: use the most recent tender's publication_date,
-        # or default to 7 days ago if no tenders exist
-        last_tender = db.query(Tender).order_by(Tender.publication_date.desc()).first()
-        if last_tender and last_tender.publication_date:
-            since_timestamp = last_tender.publication_date
-        else:
-            since_timestamp = datetime.utcnow() - timedelta(days=7)
+        # Extract licitaciones published from 60 days ago
+        since_timestamp = datetime.utcnow() - timedelta(days=60)
         
-        logger.info(f"Fetching tenders since {since_timestamp}")
+        logger.info(f"Fetching tenders published in the last 60 days (since {since_timestamp})")
         
-        # Fetch from SECOP with filters for interventoría vial
-        # Strategy 1: Filter by UNSPSC code 81101500 (Ingeniería Civil y Arquitectura)
-        # Strategy 2: Also search by keywords as backup
-        
-        all_tenders = []
-        seen_ids = set()
-        
-        # First, fetch by UNSPSC code (most precise filter)
+        # Fetch from SECOP with UNSPSC code filter only
+        # Filter by UNSPSC code 81101500 (Ingeniería Civil y Arquitectura)
         logger.info("Fetching tenders with UNSPSC code 81101500 (Ingeniería Civil y Arquitectura)")
-        unspsc_tenders = fetch_recent_tenders(
+        secop_tenders = fetch_recent_tenders(
             since_timestamp=since_timestamp,
             unspsc_code="81101500",
         )
-        for tender in unspsc_tenders:
-            if tender.external_id not in seen_ids:
-                seen_ids.add(tender.external_id)
-                all_tenders.append(tender)
         
-        logger.info(f"Found {len(unspsc_tenders)} tenders with UNSPSC 81101500")
-        
-        # Also search by keywords to catch any missed tenders
-        keywords = ["interventoría", "interventoria", "vial", "vías", "vias", "carretera", "malla vial"]
-        logger.info("Also searching by keywords for interventoría vial")
-        
-        for keyword in keywords:
-            tenders = fetch_recent_tenders(
-                since_timestamp=since_timestamp,
-                keyword_filter=keyword,
-            )
-            for tender in tenders:
-                if tender.external_id not in seen_ids:
-                    seen_ids.add(tender.external_id)
-                    all_tenders.append(tender)
-        
-        secop_tenders = all_tenders
-        logger.info(f"Found {len(secop_tenders)} unique tenders (UNSPSC + keywords)")
+        logger.info(f"Found {len(secop_tenders)} tenders with UNSPSC 81101500 from last 60 days")
         
         new_tenders = []
         updated_count = 0
         
-        for secop_tender in secop_tenders:
-            try:
-                # Check if tender already exists
-                existing = db.query(Tender).filter(
-                    Tender.external_id == secop_tender.external_id
-                ).first()
-                
-                if existing:
-                    # Update basic fields (but skip classification if already done)
-                    existing.entity_name = secop_tender.entity_name
-                    existing.object_text = secop_tender.object_text
-                    existing.department = secop_tender.department
-                    existing.municipality = secop_tender.municipality
-                    existing.amount = secop_tender.amount
-                    existing.publication_date = secop_tender.publication_date
-                    existing.closing_date = secop_tender.closing_date
-                    existing.state = secop_tender.state
-                    existing.process_url = secop_tender.process_url
-                    existing.updated_at = datetime.utcnow()
-                    updated_count += 1
-                    continue
-                
-                # Create new tender
-                new_tender = Tender(
-                    external_id=secop_tender.external_id,
-                    source=TenderSource(secop_tender.source),
-                    entity_name=secop_tender.entity_name,
-                    object_text=secop_tender.object_text,
-                    department=secop_tender.department,
-                    municipality=secop_tender.municipality,
-                    amount=secop_tender.amount,
-                    publication_date=secop_tender.publication_date,
-                    closing_date=secop_tender.closing_date,
-                    state=secop_tender.state,
-                    process_url=secop_tender.process_url,
-                    contract_type=secop_tender.contract_type,
-                    contract_modality=secop_tender.contract_modality,
-                    is_relevant_interventoria_vial=False,  # Will be updated by classification
-                )
-                
-                db.add(new_tender)
-                new_tenders.append(new_tender)
+        # Process in batches to avoid memory issues and handle duplicates better
+        batch_size = 100
+        for i in range(0, len(secop_tenders), batch_size):
+            batch = secop_tenders[i:i + batch_size]
             
+            # Get existing external_ids for this batch
+            batch_external_ids = [t.external_id for t in batch]
+            existing_ids = set(
+                db.query(Tender.external_id)
+                .filter(Tender.external_id.in_(batch_external_ids))
+                .all()
+            )
+            existing_ids = {id[0] for id in existing_ids}  # Convert from list of tuples to set
+            
+            for secop_tender in batch:
+                try:
+                    # Check if tender already exists
+                    if secop_tender.external_id in existing_ids:
+                        # Update existing tender
+                        existing = db.query(Tender).filter(
+                            Tender.external_id == secop_tender.external_id
+                        ).first()
+                        
+                        if existing:
+                            existing.entity_name = secop_tender.entity_name
+                            existing.object_text = secop_tender.object_text
+                            existing.department = secop_tender.department
+                            existing.municipality = secop_tender.municipality
+                            existing.amount = secop_tender.amount
+                            existing.publication_date = secop_tender.publication_date
+                            existing.closing_date = secop_tender.closing_date
+                            existing.state = secop_tender.state
+                            existing.apertura_estado = secop_tender.apertura_estado
+                            existing.process_url = secop_tender.process_url
+                            existing.updated_at = datetime.utcnow()
+                            updated_count += 1
+                        continue
+                    
+                    # Create new tender
+                    new_tender = Tender(
+                        external_id=secop_tender.external_id,
+                        source=TenderSource(secop_tender.source),
+                        entity_name=secop_tender.entity_name,
+                        object_text=secop_tender.object_text,
+                        department=secop_tender.department,
+                        municipality=secop_tender.municipality,
+                        amount=secop_tender.amount,
+                        publication_date=secop_tender.publication_date,
+                        closing_date=secop_tender.closing_date,
+                        state=secop_tender.state,
+                        apertura_estado=secop_tender.apertura_estado,
+                        process_url=secop_tender.process_url,
+                        contract_type=secop_tender.contract_type,
+                        contract_modality=secop_tender.contract_modality,
+                        is_relevant_interventoria_vial=False,  # Will be updated by classification
+                    )
+                    
+                    db.add(new_tender)
+                    new_tenders.append(new_tender)
+                
+                except Exception as e:
+                    logger.error(f"Error processing tender {secop_tender.external_id}: {e}")
+                    continue
+            
+            # Commit this batch
+            try:
+                db.commit()
+                logger.debug(f"Committed batch {i//batch_size + 1} ({len(batch)} tenders)")
             except Exception as e:
-                logger.error(f"Error processing tender {secop_tender.external_id}: {e}")
-                continue
-        
-        # Commit new tenders first
-        db.commit()
+                logger.error(f"Error committing batch: {e}")
+                db.rollback()
+                # Try to commit individual items to identify the problematic one
+                for secop_tender in batch:
+                    try:
+                        existing = db.query(Tender).filter(
+                            Tender.external_id == secop_tender.external_id
+                        ).first()
+                        if not existing:
+                            new_tender = Tender(
+                                external_id=secop_tender.external_id,
+                                source=TenderSource(secop_tender.source),
+                                entity_name=secop_tender.entity_name,
+                                object_text=secop_tender.object_text,
+                                department=secop_tender.department,
+                                municipality=secop_tender.municipality,
+                                amount=secop_tender.amount,
+                                publication_date=secop_tender.publication_date,
+                                closing_date=secop_tender.closing_date,
+                                state=secop_tender.state,
+                                apertura_estado=secop_tender.apertura_estado,
+                                process_url=secop_tender.process_url,
+                                contract_type=secop_tender.contract_type,
+                                contract_modality=secop_tender.contract_modality,
+                                is_relevant_interventoria_vial=False,
+                            )
+                            db.merge(new_tender)  # Use merge to handle conflicts
+                    except Exception as inner_e:
+                        logger.warning(f"Skipping duplicate tender {secop_tender.external_id}: {inner_e}")
+                        continue
+                try:
+                    db.commit()
+                except Exception as final_e:
+                    logger.error(f"Final commit error: {final_e}")
+                    db.rollback()
         
         logger.info(f"Stored {len(new_tenders)} new tenders, updated {updated_count} existing")
         
-        # Classify new tenders
-        relevant_tenders = []
-        for tender in new_tenders:
-            try:
-                # Refresh from DB to get the ID
-                db.refresh(tender)
-                
-                # Classify
-                classification = classify_tender_relevance(
-                    tender.object_text,
-                    tender.entity_name,
-                )
-                
-                tender.relevance_score = classification["relevance_score"]
-                tender.is_relevant_interventoria_vial = classification["is_relevant"]
-                
-                if classification["is_relevant"]:
-                    relevant_tenders.append(tender)
-            
-            except Exception as e:
-                logger.error(f"Error classifying tender {tender.id}: {e}")
-                continue
+        # Note: Classification with OpenAI is no longer performed
+        # The system now focuses on experience matching, which is more accurate and specific
+        # Each company sees only tenders that match their actual experience
         
-        # Commit classification results
+        # Commit all changes
         db.commit()
         
-        logger.info(f"Classified {len(new_tenders)} tenders, {len(relevant_tenders)} relevant")
+        logger.info(f"Tender ingestion completed. Experience matching is the main approach for filtering.")
         
-        # Send notifications for relevant tenders
+        # Send notifications (optional - only if subscriptions are configured)
+        # Note: Notifications can still use experience matching if needed
+        relevant_tenders = new_tenders  # For now, use all new tenders for notifications
         for tender in relevant_tenders:
             try:
                 # Find matching subscriptions
@@ -161,8 +167,9 @@ def fetch_and_store_new_tenders() -> None:
                 
                 for subscription in subscriptions:
                     # Apply subscription filters
-                    if subscription.only_relevant and not tender.is_relevant_interventoria_vial:
-                        continue
+                    # Note: only_relevant filter is deprecated - experience matching is the main approach
+                    # if subscription.only_relevant and not tender.is_relevant_interventoria_vial:
+                    #     continue
                     
                     if subscription.min_amount and tender.amount:
                         if tender.amount < subscription.min_amount:

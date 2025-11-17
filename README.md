@@ -5,9 +5,10 @@ MVP SaaS para detectar y alertar sobre licitaciones públicas de interventoría 
 ## 🎯 Descripción
 
 LicitIA es una plataforma que:
-- Detecta automáticamente licitaciones públicas del SECOP relacionadas con interventoría vial
-- Filtra y clasifica la relevancia usando OpenAI
-- Envía alertas por email y WhatsApp a empresas suscritas
+- Detecta automáticamente licitaciones públicas del SECOP (últimos 60 días)
+- Hace matching inteligente con la experiencia previa de la empresa
+- Filtra licitaciones que coinciden con el historial de proyectos (score ≥ 60%)
+- Envía alertas por email y WhatsApp a empresas suscritas (opcional)
 
 ## 🏗️ Arquitectura
 

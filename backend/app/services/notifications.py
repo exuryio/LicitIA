@@ -29,7 +29,7 @@ def send_email_alert(subscription: Subscription, tender: Tender) -> None:
         amount_str = f"${tender.amount:,.2f} COP" if tender.amount else "No especificado"
         pub_date_str = tender.publication_date.strftime('%Y-%m-%d') if tender.publication_date else 'N/A'
         closing_date_str = tender.closing_date.strftime('%Y-%m-%d') if tender.closing_date else 'N/A'
-        relevance_str = f"{tender.relevance_score:.2f}" if tender.relevance_score else 'N/A'
+        # relevance_score removed - experience matching is the main approach
         object_preview = tender.object_text[:500] + ('...' if len(tender.object_text) > 500 else '')
         
         body = f"""Hola {subscription.contact_name},
@@ -43,7 +43,6 @@ Monto: {amount_str}
 Fecha de publicación: {pub_date_str}
 Fecha de cierre: {closing_date_str}
 Estado: {tender.state}
-Relevancia: {relevance_str}
 
 Objeto del proceso:
 {object_preview}

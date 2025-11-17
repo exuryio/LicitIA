@@ -20,6 +20,7 @@ class SecopTenderDTO(BaseModel):
     publication_date: Optional[datetime] = None
     closing_date: Optional[datetime] = None
     state: str
+    apertura_estado: Optional[str] = None  # Estado de apertura: "Abierto" o "Cerrado"
     process_url: str
     contract_type: Optional[str] = None  # Tipo de contrato
     contract_modality: Optional[str] = None  # Modalidad de contratación
@@ -56,7 +57,7 @@ def fetch_recent_tenders(
     tenders = []
     limit = 1000
     offset = 0
-    max_pages = 10  # Safety limit to prevent infinite loops
+    max_pages = 50  # Increased to fetch more pages and cover 60 days
     page_count = 0
     
     # Format timestamp for Socrata query (YYYY-MM-DD format)
@@ -72,15 +73,11 @@ def fetch_recent_tenders(
             }
             
             # Filter by publication date using Socrata $where clause
-            # With app token, we can use server-side filtering
+            # Note: SECOP API may not apply date filters correctly, so we filter in memory
+            # We only use UNSPSC filter in the query, then filter by date in memory
             where_clauses = []
             
-            # Date filter: "Fecha de publicación desde"
-            if since_timestamp:
-                since_date_str = since_timestamp.strftime("%Y-%m-%d")
-                where_clauses.append(f"fecha_de_publicacion_del >= '{since_date_str}'")
-            
-            # UNSPSC code filter
+            # UNSPSC code filter (always apply this)
             if unspsc_code:
                 # Format: V1.81101500 or just 81101500
                 where_clauses.append(f"codigo_principal_de_categoria LIKE '%{unspsc_code}%'")
@@ -88,6 +85,9 @@ def fetch_recent_tenders(
             # Department filter
             if department_filter:
                 where_clauses.append(f"departamento_entidad LIKE '%{department_filter}%'")
+            
+            # Note: We don't use date filter in $where because SECOP API may not apply it correctly
+            # Instead, we filter by date in memory after fetching
             
             if where_clauses:
                 params["$where"] = " AND ".join(where_clauses)
@@ -137,19 +137,19 @@ def fetch_recent_tenders(
                         if oldest_date_in_batch is None or item_date < oldest_date_in_batch:
                             oldest_date_in_batch = item_date
                     
-                    # If filtering by UNSPSC code, include items even without dates
-                    # Otherwise, require date to be >= since_timestamp
+                    # Filter by date in memory (since we don't use date filter in $where)
+                    # Always require date to be >= since_timestamp when since_timestamp is provided
                     if has_date:
-                        if item_date >= since_timestamp:
-                            include_item = True
-                        else:
+                        if since_timestamp and item_date < since_timestamp:
                             include_item = False
+                        else:
+                            include_item = True
                     elif unspsc_code:
-                        # Include items without dates when filtering by UNSPSC
+                        # Include items without dates when filtering by UNSPSC (will be filtered later)
                         include_item = True
                     else:
-                        # Skip items without dates if no UNSPSC filter
-                        include_item = False
+                        # Skip items without dates if no UNSPSC filter and date is required
+                        include_item = False if since_timestamp else True
                     
                     if include_item:
                             # Apply additional filters
@@ -236,6 +236,7 @@ def fetch_recent_tenders(
             
             # Check if we should stop pagination
             # Stop if we've gone past the date range (oldest date in batch is older than since_timestamp)
+            # OR if we got fewer results than limit (last page)
             should_stop = False
             if oldest_date_in_batch:
                 if oldest_date_in_batch < since_timestamp:
@@ -244,6 +245,14 @@ def fetch_recent_tenders(
             elif len(data) == 0 and len(raw_data) < limit:
                 # No more pages and no matching data
                 logger.info("No more pages and no matching data found")
+                should_stop = True
+            
+            # Also stop if we got fewer results than limit (last page reached)
+            if len(raw_data) < limit:
+                logger.info(f"Reached last page (got {len(raw_data)} results, limit was {limit})")
+                # Warn if we haven't reached the date threshold yet
+                if oldest_date_in_batch and oldest_date_in_batch >= since_timestamp:
+                    logger.warning(f"Last page reached but oldest date ({oldest_date_in_batch}) is still >= {since_timestamp}. SECOP API may be limiting results.")
                 should_stop = True
             
             # Map SECOP II fields to our DTO (even if empty, to continue pagination if needed)
@@ -316,6 +325,11 @@ def fetch_recent_tenders(
                     elif "estado_resumen" in item and item["estado_resumen"]:
                         state = str(item["estado_resumen"])
                     
+                    # Get apertura estado (estado_de_apertura_del_proceso)
+                    apertura_estado = None
+                    if "estado_de_apertura_del_proceso" in item and item["estado_de_apertura_del_proceso"]:
+                        apertura_estado = str(item["estado_de_apertura_del_proceso"])
+                    
                     # Get contract type and modality
                     contract_type = item.get("tipo_de_contrato")
                     contract_modality = item.get("modalidad_de_contratacion")
@@ -330,6 +344,7 @@ def fetch_recent_tenders(
                         publication_date=pub_date,
                         closing_date=closing_date,
                         state=state,
+                        apertura_estado=apertura_estado,
                         process_url=process_url,
                         contract_type=str(contract_type) if contract_type else None,
                         contract_modality=str(contract_modality) if contract_modality else None,

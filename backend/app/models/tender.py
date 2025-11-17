@@ -30,6 +30,7 @@ class Tender(Base):
     publication_date = Column(DateTime, nullable=True, index=True)
     closing_date = Column(DateTime, nullable=True)
     state = Column(String(100), nullable=False)
+    apertura_estado = Column(String(50), nullable=True)  # Estado de apertura: "Abierto" o "Cerrado"
     process_url = Column(String(1000), nullable=False)
     contract_type = Column(String(200), nullable=True)  # Tipo de contrato
     contract_modality = Column(String(200), nullable=True)  # Modalidad de contratación
